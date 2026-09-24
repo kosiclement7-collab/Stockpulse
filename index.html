@@ -36,6 +36,11 @@ th{color:var(--mute);font-weight:400}
 .meter i{display:block;height:100%;border-radius:3px;background:var(--ok)}
 .meter.low i{background:var(--warn)}
 td input{width:70px;padding:6px 8px}
+.forms{display:grid;gap:16px;margin-bottom:16px}
+@media(min-width:700px){.forms{grid-template-columns:1fr 1fr}}
+.forms .card{margin:0}
+.forms input,.forms select{width:100%;margin-bottom:8px}
+select{font:inherit;border-radius:8px;border:1px solid var(--line);background:#0b1524;color:var(--text);padding:9px 12px}
 .hide{display:none}
 </style>
 </head>
@@ -58,6 +63,25 @@ td input{width:70px;padding:6px 8px}
     </div>
     <div class="kpis" id="kpis"></div>
     <div class="card"><h2>Revenue, last 14 days</h2><div class="bars" id="bars"></div></div>
+    <div class="forms">
+      <div class="card">
+        <h2>Add product</h2>
+        <input id="np_name" placeholder="Product name">
+        <input id="np_cat" placeholder="Category">
+        <input id="np_price" type="number" min="1" placeholder="Price (₦)">
+        <input id="np_stock" type="number" min="0" placeholder="Opening stock">
+        <input id="np_re" type="number" min="1" placeholder="Reorder level">
+        <button onclick="addProduct()">Add product</button>
+      </div>
+      <div class="card">
+        <h2>New order</h2>
+        <input id="no_cust" placeholder="Customer name">
+        <select id="no_prod" aria-label="Product"></select>
+        <input id="no_qty" type="number" min="1" placeholder="Quantity">
+        <button onclick="recordOrder()">Record order</button>
+      </div>
+    </div>
+    <div class="err" id="formMsg" style="margin:-8px 0 12px"></div>
     <div class="card">
       <h2>Stock levels</h2>
       <div class="err" id="msg"></div>
@@ -78,7 +102,7 @@ td input{width:70px;padding:6px 8px}
 
 <script>
 // After deploying on Render, replace this with your service URL
-const API = 'https://stockpulse-1-k4rx.onrender.com';
+const API = 'https://YOUR-APP.onrender.com';
 
 const $ = s => document.querySelector(s);
 const naira = n => '₦' + Math.round(n).toLocaleString('en-NG');
@@ -142,6 +166,10 @@ async function load() {
         <button onclick="restock(${p.id})">Add stock</button></td></tr>`;
     }).join('');
 
+    const sel = $('#no_prod').value;
+    $('#no_prod').innerHTML = products.map(p => `<option value="${p.id}">${esc(p.name)} (${p.stock} left)</option>`).join('');
+    if (sel) $('#no_prod').value = sel;
+
     $('#orders').innerHTML = orders.map(o =>
       `<tr><td>${esc(o.customer)}</td><td>${esc(o.product)}</td><td>${o.qty}</td><td>${naira(o.total)}</td></tr>`).join('');
   } catch (e) { $('#msg').textContent = e.message; }
@@ -153,6 +181,27 @@ async function restock(id) {
     await api(`/api/products/${id}/restock`, { method: 'POST', body: JSON.stringify({ qty: Number($('#q' + id).value) }) });
     await load();
   } catch (e) { $('#msg').textContent = e.message; }
+}
+
+function say(t, ok) { const m = $('#formMsg'); m.textContent = t; m.style.color = ok ? 'var(--ok)' : 'var(--warn)'; }
+
+async function addProduct() {
+  try {
+    await api('/api/products', { method: 'POST', body: JSON.stringify({
+      name: $('#np_name').value, category: $('#np_cat').value, price: $('#np_price').value,
+      stock: $('#np_stock').value, reorder_at: $('#np_re').value }) });
+    ['np_name', 'np_cat', 'np_price', 'np_stock', 'np_re'].forEach(i => $('#' + i).value = '');
+    say('Product added', true); await load();
+  } catch (e) { say(e.message, false); }
+}
+
+async function recordOrder() {
+  try {
+    await api('/api/orders', { method: 'POST', body: JSON.stringify({
+      customer: $('#no_cust').value, product_id: $('#no_prod').value, qty: $('#no_qty').value }) });
+    $('#no_cust').value = ''; $('#no_qty').value = '';
+    say('Order recorded and stock updated', true); await load();
+  } catch (e) { say(e.message, false); }
 }
 
 if (token) start();
