@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>StockPulse</title>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0e1a2b;--panel:#16283f;--line:#25405f;--text:#e8eef6;--mute:#8ea3bb;--ok:#3ddc97;--warn:#f5a25d;--accent:#5bc0eb}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 'Schibsted Grotesk',system-ui,sans-serif}
+.wrap{max-width:1000px;margin:0 auto;padding:16px}
+h1{font-size:22px;font-weight:800;margin:0}
+h2{font-size:16px;margin:0 0 12px}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+.kpis{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:16px}
+@media(min-width:700px){.kpis{grid-template-columns:repeat(4,1fr)}}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+.kpi small{color:var(--mute)}.kpi b{display:block;font-size:22px;margin-top:2px}
+.kpi.low b{color:var(--warn)}
+input,button{font:inherit;border-radius:8px;border:1px solid var(--line);background:#0b1524;color:var(--text);padding:9px 12px}
+button{background:var(--accent);color:#06202f;font-weight:600;border:0;cursor:pointer}
+button.ghost{background:transparent;color:var(--mute);border:1px solid var(--line)}
+input:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.login{max-width:340px;margin:12vh auto}
+.login input{width:100%;margin-bottom:10px}
+.err{color:var(--warn);min-height:20px;font-size:14px}
+.bars{display:flex;align-items:flex-end;gap:6px;height:120px}
+.bars div{flex:1;background:var(--accent);border-radius:4px 4px 0 0;min-height:2px}
+.scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;min-width:560px}
+th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--line);font-size:14px}
+th{color:var(--mute);font-weight:400}
+.meter{height:6px;background:#0b1524;border-radius:3px;width:90px}
+.meter i{display:block;height:100%;border-radius:3px;background:var(--ok)}
+.meter.low i{background:var(--warn)}
+td input{width:70px;padding:6px 8px}
+.hide{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="login" class="card login">
+    <h1>StockPulse</h1>
+    <p style="color:var(--mute)">Sign in to manage stock and orders.</p>
+    <input id="u" placeholder="Username" autocomplete="username" value="admin">
+    <input id="p" type="password" placeholder="Password" autocomplete="current-password">
+    <div class="err" id="loginErr"></div>
+    <button onclick="login()" style="width:100%">Sign in</button>
+  </div>
+
+  <div id="app" class="hide">
+    <div class="top">
+      <h1>StockPulse</h1>
+      <button class="ghost" onclick="logout()">Sign out</button>
+    </div>
+    <div class="kpis" id="kpis"></div>
+    <div class="card"><h2>Revenue, last 14 days</h2><div class="bars" id="bars"></div></div>
+    <div class="card">
+      <h2>Stock levels</h2>
+      <div class="err" id="msg"></div>
+      <div class="scroll"><table>
+        <thead><tr><th>Product</th><th>Category</th><th>Price</th><th>Stock</th><th>Restock</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table></div>
+    </div>
+    <div class="card">
+      <h2>Recent orders</h2>
+      <div class="scroll"><table>
+        <thead><tr><th>Customer</th><th>Product</th><th>Qty</th><th>Total</th></tr></thead>
+        <tbody id="orders"></tbody>
+      </table></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// After deploying on Render, replace this with your service URL
+const API = 'https://stockpulse-1-k4rx.onrender.com';
+
+const $ = s => document.querySelector(s);
+const naira = n => '₦' + Math.round(n).toLocaleString('en-NG');
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let token = null;
+try { token = localStorage.getItem('sp_token'); } catch (e) {}
+
+async function api(path, opts = {}) {
+  const res = await fetch(API + path, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && token) logout();
+  if (!res.ok) throw new Error(data.error || 'Request failed');
+  return data;
+}
+
+async function login() {
+  $('#loginErr').textContent = '';
+  try {
+    const d = await api('/api/login', { method: 'POST', body: JSON.stringify({ username: $('#u').value, password: $('#p').value }) });
+    token = d.token;
+    try { localStorage.setItem('sp_token', token); } catch (e) {}
+    start();
+  } catch (e) {
+    $('#loginErr').textContent = e.message === 'Failed to fetch'
+      ? 'Cannot reach the server. It may be waking up; try again in a minute.' : e.message;
+  }
+}
+
+function logout() {
+  token = null;
+  try { localStorage.removeItem('sp_token'); } catch (e) {}
+  $('#app').classList.add('hide'); $('#login').classList.remove('hide');
+}
+
+async function start() {
+  $('#login').classList.add('hide'); $('#app').classList.remove('hide');
+  await load();
+}
+
+async function load() {
+  try {
+    const [s, products, orders] = await Promise.all([api('/api/summary'), api('/api/products'), api('/api/orders')]);
+    $('#kpis').innerHTML = [
+      ['Products', s.skus, ''], ['Stock value', naira(s.value), ''],
+      ['Need restocking', s.low, 'low'], ['Revenue, 30 days', naira(s.revenue), '']
+    ].map(k => `<div class="kpi ${k[2]}"><small>${k[0]}</small><b>${k[1]}</b></div>`).join('');
+
+    const max = Math.max(...s.daily.map(d => d.total), 1);
+    $('#bars').innerHTML = s.daily.map(d =>
+      `<div title="${d.d}: ${naira(d.total)}" style="height:${Math.round(d.total / max * 100)}%"></div>`).join('');
+
+    $('#rows').innerHTML = products.map(p => {
+      const low = p.stock <= p.reorder_at;
+      const pct = Math.min(100, Math.round(p.stock / (p.reorder_at * 3) * 100));
+      return `<tr><td>${esc(p.name)}</td><td>${esc(p.category)}</td><td>${naira(p.price)}</td>
+        <td><div class="meter ${low ? 'low' : ''}"><i style="width:${pct}%"></i></div>${p.stock} in stock</td>
+        <td><input id="q${p.id}" type="number" min="1" value="${p.reorder_at * 2}" aria-label="Quantity to add for ${esc(p.name)}">
+        <button onclick="restock(${p.id})">Add stock</button></td></tr>`;
+    }).join('');
+
+    $('#orders').innerHTML = orders.map(o =>
+      `<tr><td>${esc(o.customer)}</td><td>${esc(o.product)}</td><td>${o.qty}</td><td>${naira(o.total)}</td></tr>`).join('');
+  } catch (e) { $('#msg').textContent = e.message; }
+}
+
+async function restock(id) {
+  $('#msg').textContent = '';
+  try {
+    await api(`/api/products/${id}/restock`, { method: 'POST', body: JSON.stringify({ qty: Number($('#q' + id).value) }) });
+    await load();
+  } catch (e) { $('#msg').textContent = e.message; }
+}
+
+if (token) start();
+</script>
+</body>
+</html>
