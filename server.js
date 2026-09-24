@@ -111,6 +111,38 @@ app.post('/api/products/:id/restock', auth, wrap(async (req, res) => {
   res.json(r.rows[0]);
 }));
 
+app.post('/api/products', auth, wrap(async (req, res) => {
+  const { name, category, price, stock, reorder_at } = req.body || {};
+  const p = Number(price), s = Number(stock), r = Number(reorder_at);
+  if (!String(name || '').trim() || !String(category || '').trim() || !(p > 0) ||
+      !Number.isInteger(s) || s < 0 || !Number.isInteger(r) || r < 1)
+    return res.status(400).json({ error: 'Fill in name, category, a price above 0, stock and a reorder level' });
+  const out = await pool.query(
+    'INSERT INTO products(name,category,price,stock,reorder_at) VALUES($1,$2,$3,$4,$5) RETURNING *',
+    [String(name).trim().slice(0, 80), String(category).trim().slice(0, 40), p, s, r]);
+  res.status(201).json(out.rows[0]);
+}));
+
+app.post('/api/orders', auth, wrap(async (req, res) => {
+  const { customer, product_id, qty } = req.body || {};
+  const pid = Number(product_id), q = Number(qty);
+  if (!String(customer || '').trim() || !Number.isInteger(pid) || !Number.isInteger(q) || q < 1 || q > 10000)
+    return res.status(400).json({ error: 'Enter a customer, a product and a whole-number quantity' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const pr = await client.query('SELECT price, stock FROM products WHERE id=$1 FOR UPDATE', [pid]);
+    if (!pr.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Product not found' }); }
+    if (pr.rows[0].stock < q) { await client.query('ROLLBACK'); return res.status(400).json({ error: `Only ${pr.rows[0].stock} in stock` }); }
+    await client.query('UPDATE products SET stock=stock-$1 WHERE id=$2', [q, pid]);
+    const o = await client.query('INSERT INTO orders(customer,product_id,qty,total) VALUES($1,$2,$3,$4) RETURNING *',
+      [String(customer).trim().slice(0, 80), pid, q, pr.rows[0].price * q]);
+    await client.query('COMMIT');
+    res.status(201).json(o.rows[0]);
+  } catch (e) { await client.query('ROLLBACK'); throw e; }
+  finally { client.release(); }
+}));
+
 init()
   .then(() => app.listen(process.env.PORT || 3000, () => console.log('StockPulse API running')))
   .catch(e => { console.error('Startup failed:', e.message); process.exit(1); });
